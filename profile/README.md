@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://axiumhq.dev/assets/logo.svg" alt="Axium" width="240" />
+<img src="./axium-wordmark.svg" alt="Axium" width="240" />
 
 **Dois engenheiros. Do pixel ao servidor.**  
 **Two engineers. From pixel to server.**
