@@ -26,6 +26,7 @@ if ! [[ "$STABILIZATION_SECONDS" =~ ^[0-9]+$ ]]; then
 fi
 MIN_CONFIDENCE=0.70
 MAX_PRS=50
+MAX_SYNTHESIS_INPUTS=12
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -458,12 +459,62 @@ $pre_summary"
     # The aggregate result still must meet the normal confidence threshold.
     needs_synthesis="$(jq -s 'any(.[]; .needs_synthesis == true) or (length > 1 and all(.[]; .choice == "none"))' "$TMP/pr-$number-chunk-results.jsonl")"
     if [[ "$needs_synthesis" == true ]]; then
-      echo "PR #$number needs whole-PR synthesis; reconciling all chunk analyses."
-      jq --slurpfile chunk_results "$TMP/pr-$number-chunk-results.jsonl" \
-        '. + {analysis_mode:"chunk-aggregate",diff:"",chunk_results:$chunk_results}' \
-        "$TMP/pr-$number.json" > "$TMP/pr-$number-aggregate.json"
-      if ! result="$(jev ask --preset release-impact --param "pr=@$TMP/pr-$number-aggregate.json")"; then
-        echo "::warning::Jev could not synthesize chunk results for PR #$number; requiring manual review."
+      echo "PR #$number needs whole-PR synthesis; reconciling chunk analyses in groups of at most $MAX_SYNTHESIS_INPUTS."
+      synthesis_input="$TMP/pr-$number-chunk-results.jsonl"
+      synthesis_level=0
+      synthesis_failed=false
+
+      # Keep every Jev request bounded. Large direct-commit ranges can produce
+      # hundreds of chunks; recursively summarize groups before the final pass.
+      while (( $(wc -l < "$synthesis_input" | tr -d ' ') > MAX_SYNTHESIS_INPUTS )); do
+        ((synthesis_level+=1))
+        grouped_file="$TMP/pr-$number-synthesis-level-$synthesis_level.json"
+        next_file="$TMP/pr-$number-synthesis-level-$synthesis_level.jsonl"
+        jq --argjson width "$MAX_SYNTHESIS_INPUTS" -s '[range(0; length; $width) as $i | .[$i:($i + $width)]]' "$synthesis_input" > "$grouped_file"
+        : > "$next_file"
+        group_count="$(jq 'length' "$grouped_file")"
+        for ((group_index=0; group_index<group_count; group_index++)); do
+          group_file="$TMP/pr-$number-synthesis-level-$synthesis_level-group-$group_index.json"
+          aggregate_file="$TMP/pr-$number-synthesis-level-$synthesis_level-group-$group_index-request.json"
+          jq ".[$group_index]" "$grouped_file" > "$group_file"
+          jq --slurpfile chunk_results "$group_file" \
+            --argjson synthesis_level "$synthesis_level" \
+            '. + {analysis_mode:"chunk-aggregate",diff:"",chunk_results:$chunk_results[0],synthesis_level:$synthesis_level}' \
+            "$TMP/pr-$number.json" > "$aggregate_file"
+
+          if ! group_result="$(jev ask --preset release-impact --param "pr=@$aggregate_file")"; then
+            echo "::warning::Jev could not synthesize group $((group_index + 1))/$group_count for PR #$number; requiring manual review."
+            synthesis_failed=true
+            break
+          fi
+          if ! group_choice="$(jq -er '.answers.impact.choice' <<< "$group_result")" ||
+             ! group_confidence="$(jq -er --arg choice "$group_choice" '.answers.impact.probabilities[$choice]' <<< "$group_result")" ||
+             ! [[ "$group_confidence" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+             ! [[ "$group_choice" =~ ^(major|minor|patch|none|review)$ ]]; then
+            echo "::warning::Jev returned an invalid synthesis for group $((group_index + 1))/$group_count of PR #$number; requiring manual review."
+            synthesis_failed=true
+            break
+          fi
+          jq -c --argjson group_index "$group_index" --arg choice "$group_choice" --argjson confidence "$group_confidence" \
+            --slurpfile group "$group_file" \
+            '{chunk_index:$group_index,files:([$group[0][] | .files[]?] | unique),choice:$choice,confidence:$confidence,probabilities:.answers.impact.probabilities,needs_synthesis:false,analysis:.answers.impact}' \
+            <<< "$group_result" >> "$next_file"
+        done
+        if [[ "$synthesis_failed" == true ]]; then break; fi
+        synthesis_input="$next_file"
+      done
+
+      if [[ "$synthesis_failed" == false ]]; then
+        jq --slurpfile chunk_results "$synthesis_input" \
+          --argjson synthesis_level "$synthesis_level" \
+          '. + {analysis_mode:"chunk-aggregate",diff:"",chunk_results:$chunk_results,synthesis_level:$synthesis_level}' \
+          "$TMP/pr-$number.json" > "$TMP/pr-$number-aggregate.json"
+        if ! result="$(jev ask --preset release-impact --param "pr=@$TMP/pr-$number-aggregate.json")"; then
+          echo "::warning::Jev could not synthesize chunk results for PR #$number; requiring manual review."
+          synthesis_failed=true
+        fi
+      fi
+      if [[ "$synthesis_failed" == true ]]; then
         printf '{"number":%s,"title":%s,"url":%s,"impact":"review","probability":null,"method":"jev-chunk-aggregate","needs_review":true,"review_reason":"Whole-PR synthesis failed"}\n' \
           "$number" "$(jq -Rn --arg v "$title" '$v')" "$(jq -Rn --arg v "$url" '$v')" >> "$TMP/decisions.jsonl"
         ((review_count+=1))
