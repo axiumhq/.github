@@ -95,6 +95,10 @@ class ReleaseEngineTest(unittest.TestCase):
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn('Baseline ref must be a full commit SHA', invalid.stdout)
 
+    def test_automatic_direct_impact_is_accepted(self):
+        result = run('bash', str(ENGINE / 'intelligent-release.sh'), cwd=self.work, env=dict(self.env, DIRECT_IMPACT='auto'))
+        self.assertIn('No merged PRs after', result)
+
 
 if __name__ == '__main__':
     unittest.main()

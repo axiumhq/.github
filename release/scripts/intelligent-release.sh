@@ -11,6 +11,7 @@ REPO="${REPOSITORY#*/}"
 STABILIZATION_SECONDS="${STABILIZATION_SECONDS:-900}"
 DRY_RUN="${DRY_RUN:-false}"
 DIRECT_IMPACT="${DIRECT_IMPACT:-}"
+if [[ "$DIRECT_IMPACT" == auto ]]; then DIRECT_IMPACT=""; fi
 if [[ -n "$DIRECT_IMPACT" && ! "$DIRECT_IMPACT" =~ ^(major|minor|patch|none)$ ]]; then
   echo "::error::DIRECT_IMPACT must be empty, major, minor, patch or none."
   exit 1
