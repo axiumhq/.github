@@ -7,3 +7,5 @@ Inputs: `stabilization_seconds`, `dry_run`, `force`, `baseline_version`. Require
 The workflow fetches the shared engine from the organization repository's `main` branch. A central change therefore reaches callers on their next run. A caller must serialize its runs per repository and should provide a manual dry run.
 
 When a PR remains ambiguous, maintainers can apply exactly one of `release-impact/major`, `release-impact/minor`, `release-impact/patch`, or `release-impact/none` and rerun with `force=true`. Conflicting labels always block the release; missing labels leave classification to Jev. Only people permitted to manage PR labels can set this override.
+
+For an ambiguous batch of direct commits, a maintainer can rerun with `force=true` and set `direct_impact` to one of the same four impacts. `baseline_ref` can specify a full commit SHA in main's history for an untagged repository; otherwise the first commit is used. The baseline never creates a tag by itself.

@@ -10,6 +10,11 @@ OWNER="${REPOSITORY%%/*}"
 REPO="${REPOSITORY#*/}"
 STABILIZATION_SECONDS="${STABILIZATION_SECONDS:-900}"
 DRY_RUN="${DRY_RUN:-false}"
+DIRECT_IMPACT="${DIRECT_IMPACT:-}"
+if [[ -n "$DIRECT_IMPACT" && ! "$DIRECT_IMPACT" =~ ^(major|minor|patch|none)$ ]]; then
+  echo "::error::DIRECT_IMPACT must be empty, major, minor, patch or none."
+  exit 1
+fi
 if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
   echo "::error::DRY_RUN must be true or false."
   exit 1
@@ -97,14 +102,18 @@ fi
 
 LAST_TAG="$(git tag -l 'v[0-9]*' --sort=-version:refname | head -n 1)"
 if [[ -z "$LAST_TAG" ]]; then
-  LAST_TAG="$(git rev-list --max-parents=0 "$MAIN_SHA" | tail -n 1)"
+  LAST_TAG="${BASELINE_REF:-$(git rev-list --max-parents=0 "$MAIN_SHA" | tail -n 1)}"
+  if ! [[ "$LAST_TAG" =~ ^[a-f0-9]{40}$ ]] || ! git merge-base --is-ancestor "$LAST_TAG" "$MAIN_SHA"; then
+    echo "::error::Baseline ref must be a full commit SHA in main's history."
+    exit 1
+  fi
   BASELINE_VERSION="${BASELINE_VERSION:-0.0.0}"
   if ! [[ "$BASELINE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
     echo "::error::Baseline version must be strict SemVer X.Y.Z."
     exit 1
   fi
   MAJOR="${BASH_REMATCH[1]}" MINOR="${BASH_REMATCH[2]}" PATCH="${BASH_REMATCH[3]}"
-  echo "No version tag exists; using the first commit as baseline and v$BASELINE_VERSION as version."
+  echo "No version tag exists; using baseline $LAST_TAG and v$BASELINE_VERSION as version."
 else
   if ! [[ "$LAST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     echo "::error::Latest version tag '$LAST_TAG' is not strict SemVer vX.Y.Z."
@@ -151,9 +160,9 @@ while IFS= read -r commit; do
 done < <(git rev-list --first-parent --reverse "$LAST_TAG..$MAIN_SHA")
 if (( direct_commits > 0 )); then
   files_json="$(git diff --name-only "$LAST_TAG" "$MAIN_SHA" | jq -Rsc 'split("\n") | map(select(length > 0) | {path: .})')"
-  jq -cn --arg url "https://github.com/$REPOSITORY/compare/$LAST_TAG...$MAIN_SHA" \
+  jq -cn --arg url "https://github.com/$REPOSITORY/compare/$LAST_TAG...$MAIN_SHA" --arg impact "$DIRECT_IMPACT" \
     --argjson files "$files_json" --argjson count "$direct_commits" \
-    '{number:0,title:"Direct commits on main",body:("Complete comparison includes " + ($count|tostring) + " direct commit(s), potentially alongside merged PRs."),url:$url,labels:[],files:$files,direct:true}' >> "$TMP/eligible.jsonl"
+    '{number:0,title:"Direct commits on main",body:("Complete comparison includes " + ($count|tostring) + " direct commit(s), potentially alongside merged PRs."),url:$url,labels:(if $impact == "" then [] else [{name:("release-impact/" + $impact)}] end),files:$files,direct:true}' >> "$TMP/eligible.jsonl"
 fi
 
 eligible_count="$(wc -l < "$TMP/eligible.jsonl" | tr -d ' ')"

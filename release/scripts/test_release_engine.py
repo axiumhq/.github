@@ -41,7 +41,7 @@ class ReleaseEngineTest(unittest.TestCase):
         run('git', 'commit', '-m', 'ci: configure', cwd=self.work)
         run('git', 'push', 'origin', 'main', cwd=self.work)
         result = run('bash', str(ENGINE / 'intelligent-release.sh'), cwd=self.work, env=self.env)
-        self.assertIn('using the first commit as baseline', result)
+        self.assertIn('No version tag exists; using baseline', result)
         self.assertIn('Classifying 1 merged PR(s)', result)
         self.assertIn('deterministic: release/CI-only paths', result)
         self.assertEqual(run('git', 'tag', '-l', cwd=self.work), '')
@@ -80,6 +80,20 @@ class ReleaseEngineTest(unittest.TestCase):
         self.assertIn('Dry run blocked by 1 PR(s)', result)
         self.assertIn('Conflicting release-impact labels', (self.root / 'summary').read_text())
         self.assertEqual(run('git', 'tag', '-l', cwd=self.work), '')
+
+    def test_direct_commit_override_and_invalid_baseline(self):
+        baseline = run('git', 'rev-parse', 'HEAD', cwd=self.work)
+        (self.work / 'app.txt').write_text('new behavior\n')
+        run('git', 'add', '.', cwd=self.work)
+        run('git', 'commit', '-m', 'change', cwd=self.work)
+        run('git', 'push', 'origin', 'main', cwd=self.work)
+        env = dict(self.env, BASELINE_REF=baseline, BASELINE_VERSION='2.0.0', DIRECT_IMPACT='patch')
+        result = run('bash', str(ENGINE / 'intelligent-release.sh'), cwd=self.work, env=env)
+        self.assertIn('PR #0 => patch (maintainer label)', result)
+        self.assertIn('Would publish: v2.0.1', (self.root / 'summary').read_text())
+        invalid = subprocess.run(['bash', str(ENGINE / 'intelligent-release.sh')], cwd=self.work, env=dict(env, BASELINE_REF='abc'), text=True, capture_output=True)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn('Baseline ref must be a full commit SHA', invalid.stdout)
 
 
 if __name__ == '__main__':

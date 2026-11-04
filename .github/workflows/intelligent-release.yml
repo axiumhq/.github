@@ -15,6 +15,12 @@ on:
       baseline_version:
         type: string
         default: '0.0.0'
+      baseline_ref:
+        type: string
+        default: ''
+      direct_impact:
+        type: string
+        default: ''
       engine_ref:
         type: string
         default: main
@@ -74,6 +80,8 @@ jobs:
           STABILIZATION_SECONDS: ${{ inputs.stabilization_seconds }}
           DRY_RUN: ${{ inputs.dry_run }}
           BASELINE_VERSION: ${{ inputs.baseline_version }}
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+          DIRECT_IMPACT: ${{ inputs.direct_impact }}
         run: |
           set -euo pipefail
           gh auth setup-git
