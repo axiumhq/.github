@@ -1,17 +1,25 @@
 <div align="center">
 
-# enzolaOps
+# AXIUM
 
-Infraestrutura e produtos, operados ponta a ponta.
+**Software, do produto à operação.**
 
-Uma org pequena. Código revisado, imagem por digest, nada público sem querer.
-
-[Vortex](https://github.com/enzolaOps/vortex) · [enzola.dev](https://enzola.dev)
+[Site](https://axiumhq.dev) · [Vortex](https://github.com/axiumhq/vortex)
 
 </div>
 
 ---
 
-**Vortex** é o que está aberto: chat self-hosted, cliente e servidor no mesmo repositório. O resto da org é privado — corre no metal, na Tailnet.
+A Axium reúne o trabalho de dois engenheiros independentes, Vinicius Laguna e Enzo. Construímos software de ponta a ponta e operamos a infraestrutura onde ele roda.
 
-Não é uma empresa. É a bancada onde o software sai.
+## Projeto público
+
+**[Vortex](https://github.com/axiumhq/vortex)** é um chat self-hosted com cliente web e desktop, servidor próprio, voz e compartilhamento de tela. Usa o protocolo Stoat e é distribuído sob a licença AGPL-3.0. O projeto é independente e não é afiliado ao Stoat.
+
+---
+
+Axium brings together the work of two independent engineers, Vinicius Laguna and Enzo. We build software end to end and operate the infrastructure it runs on.
+
+## Public project
+
+**[Vortex](https://github.com/axiumhq/vortex)** is a self-hosted chat with web and desktop clients, its own server, voice, and screen sharing. It uses the Stoat protocol and is released under AGPL-3.0. Vortex is independent and is not affiliated with Stoat.
