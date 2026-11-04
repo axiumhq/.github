@@ -30,7 +30,7 @@ class ReleaseEngineTest(unittest.TestCase):
         run('git', 'commit', '-m', 'initial', cwd=self.work)
         run('git', 'push', '-u', 'origin', 'main', cwd=self.work)
         gh = self.bin / 'gh'
-        gh.write_text('#!/bin/sh\ncase "$1 $2" in "api graphql") echo 0;; "pr list") echo "[]";; *) echo "unexpected gh call: $*" >&2; exit 1;; esac\n')
+        gh.write_text('#!/bin/sh\ncase "$1 $2" in "api graphql") echo 0;; "pr list") if [ -n "${PR_FIXTURE:-}" ]; then cat "$PR_FIXTURE"; else echo "[]"; fi;; "release view") exit 1;; *) echo "unexpected gh call: $*" >&2; exit 1;; esac\n')
         gh.chmod(0o755)
         self.env = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}', GH_TOKEN='test', JEV_API_KEY='test', REPOSITORY='org/project', ENGINE_ROOT=str(ENGINE.parent), STABILIZATION_SECONDS='0', GITHUB_STEP_SUMMARY=str(self.root / 'summary'), DRY_RUN='true')
 
@@ -58,6 +58,27 @@ class ReleaseEngineTest(unittest.TestCase):
         env = dict(self.env, DRY_RUN='false')
         result = run('bash', str(ENGINE / 'intelligent-release.sh'), cwd=self.work, env=env)
         self.assertIn('a newer push will handle it', result)
+        self.assertEqual(run('git', 'tag', '-l', cwd=self.work), '')
+
+    def test_maintainer_label_resolves_release_and_conflicts_block(self):
+        import json
+        (self.work / 'app.txt').write_text('changed\n')
+        run('git', 'add', '.', cwd=self.work)
+        run('git', 'commit', '-m', 'change', cwd=self.work)
+        run('git', 'push', 'origin', 'main', cwd=self.work)
+        sha = run('git', 'rev-parse', 'HEAD', cwd=self.work)
+        fixture = self.root / 'pulls.json'
+        pull = {'number': 12, 'title': 'Feature', 'body': '', 'url': 'https://example.com/pr/12', 'labels': [{'name': 'release-impact/minor'}], 'files': [{'path': 'app.txt'}], 'mergeCommit': {'oid': sha}}
+        fixture.write_text(json.dumps([pull]))
+        env = dict(self.env, PR_FIXTURE=str(fixture))
+        result = run('bash', str(ENGINE / 'intelligent-release.sh'), cwd=self.work, env=env)
+        self.assertIn('PR #12 => minor (maintainer label)', result)
+        self.assertIn('Would publish: v0.1.0', (self.root / 'summary').read_text())
+        pull['labels'].append({'name': 'release-impact/patch'})
+        fixture.write_text(json.dumps([pull]))
+        result = run('bash', str(ENGINE / 'intelligent-release.sh'), cwd=self.work, env=env)
+        self.assertIn('Dry run blocked by 1 PR(s)', result)
+        self.assertIn('Conflicting release-impact labels', (self.root / 'summary').read_text())
         self.assertEqual(run('git', 'tag', '-l', cwd=self.work), '')
 
 

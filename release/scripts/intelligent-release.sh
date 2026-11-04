@@ -186,6 +186,30 @@ while IFS= read -r pr; do
   labels="$(jq -c '[.labels[].name]' <<< "$pr")"
   files="$(jq -c '[.files[].path]' <<< "$pr")"
 
+  # Maintainers may resolve an ambiguous classification explicitly on the PR.
+  overrides="$(jq -c '[.[] | select(test("^release-impact/(major|minor|patch|none)$"))] | unique' <<< "$labels")"
+  override_count="$(jq 'length' <<< "$overrides")"
+  if (( override_count > 1 )); then
+    jq -cn --argjson number "$number" --arg title "$title" --arg url "$url" \
+      '{number:$number,title:$title,url:$url,impact:"review",probability:null,method:"manual-label",needs_review:true,review_reason:"Conflicting release-impact labels"}' >> "$TMP/decisions.jsonl"
+    ((review_count+=1))
+    continue
+  fi
+  if (( override_count == 1 )); then
+    choice="$(jq -r '.[0] | split("/")[1]' <<< "$overrides")"
+    jq -cn --argjson number "$number" --arg title "$title" --arg url "$url" --arg choice "$choice" \
+      '{number:$number,title:$title,url:$url,impact:$choice,probability:1,method:"manual-label",needs_review:false}' >> "$TMP/decisions.jsonl"
+    item="- **#$number** $title ([PR](<$url>))"
+    case "$choice" in
+      major) printf '%s\n' "$item" >> "$TMP/major.md"; ((major_count+=1)) ;;
+      minor) printf '%s\n' "$item" >> "$TMP/minor.md"; ((minor_count+=1)) ;;
+      patch) printf '%s\n' "$item" >> "$TMP/patch.md"; ((patch_count+=1)) ;;
+      none) ((none_count+=1)) ;;
+    esac
+    echo "PR #$number => $choice (maintainer label)"
+    continue
+  fi
+
   # Release/CI automation changes cannot alter the shipped product behavior.
   # Keep this policy narrow and deterministic; mixed product+automation PRs go to Jev.
   if jq -e 'length > 0 and all(.[]; startswith(".github/workflows/") or startswith("scripts/ci/") or startswith(".jev/"))' <<< "$files" >/dev/null; then
