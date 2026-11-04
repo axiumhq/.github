@@ -2,7 +2,8 @@
 
 <img src="https://axiumhq.dev/assets/logo.svg" alt="Axium" width="240" />
 
-**Software, do produto à operação.**
+**Dois engenheiros. Do pixel ao servidor.**  
+**Two engineers. From pixel to server.**
 
 [Site](https://axiumhq.dev) · [Vortex](https://github.com/axiumhq/vortex)
 
@@ -10,7 +11,7 @@
 
 ---
 
-A Axium reúne o trabalho de dois engenheiros independentes, Vinicius Laguna e Enzo. Construímos software de ponta a ponta e operamos a infraestrutura onde ele roda.
+Somos Vinicius e Enzo, dois engenheiros. Projetamos, programamos, hospedamos e operamos software. Cada camada, com as mesmas mãos.
 
 ## Projeto público
 
@@ -18,7 +19,7 @@ A Axium reúne o trabalho de dois engenheiros independentes, Vinicius Laguna e E
 
 ---
 
-Axium brings together the work of two independent engineers, Vinicius Laguna and Enzo. We build software end to end and operate the infrastructure it runs on.
+We are Vinicius and Enzo, two engineers. We design, code, host and run software. Every layer, with the same hands.
 
 ## Public project
 
