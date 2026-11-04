@@ -8,7 +8,7 @@ set -euo pipefail
 
 OWNER="${REPOSITORY%%/*}"
 REPO="${REPOSITORY#*/}"
-STABILIZATION_SECONDS="${STABILIZATION_SECONDS:-180}"
+: "${STABILIZATION_SECONDS:?The shared workflow must provide STABILIZATION_SECONDS}"
 DRY_RUN="${DRY_RUN:-false}"
 DIRECT_IMPACT="${DIRECT_IMPACT:-}"
 if [[ "$DIRECT_IMPACT" == auto ]]; then DIRECT_IMPACT=""; fi

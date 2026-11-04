@@ -5,7 +5,7 @@ on:
     inputs:
       stabilization_seconds:
         type: string
-        default: '180'
+        default: ''
       dry_run:
         type: boolean
         default: false
@@ -80,7 +80,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           ENGINE_ROOT: ${{ github.workspace }}/.axium-release/release
           FORCE_REANALYZE: ${{ inputs.force }}
-          STABILIZATION_SECONDS: ${{ inputs.stabilization_seconds }}
+          STABILIZATION_SECONDS: ${{ inputs.stabilization_seconds || '180' }}
           DRY_RUN: ${{ inputs.dry_run }}
           BASELINE_VERSION: ${{ inputs.baseline_version }}
           BASELINE_REF: ${{ inputs.baseline_ref }}
