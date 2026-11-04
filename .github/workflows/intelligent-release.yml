@@ -1,0 +1,82 @@
+name: Shared intelligent release
+
+on:
+  workflow_call:
+    inputs:
+      stabilization_seconds:
+        type: string
+        default: '900'
+      dry_run:
+        type: boolean
+        default: false
+      force:
+        type: boolean
+        default: false
+      baseline_version:
+        type: string
+        default: '0.0.0'
+      engine_ref:
+        type: string
+        default: main
+    secrets:
+      CI_APP_ID:
+        required: true
+      CI_APP_PRIVATE_KEY:
+        required: true
+      JEV_API_KEY:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout project and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && github.ref || 'main' }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout shared release engine
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: axiumhq/.github
+          ref: ${{ inputs.engine_ref }}
+          path: .axium-release
+          persist-credentials: false
+      - name: Install Jev
+        env:
+          JEV_VERSION: v2026.919.0
+          JEV_INSTALL_DIR: ${{ runner.temp }}/jev-bin
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/model-clis/jev/v2026.919.0/scripts/install.sh | sh
+          echo "$JEV_INSTALL_DIR" >> "$GITHUB_PATH"
+          "$JEV_INSTALL_DIR/jev" --version
+      - name: Create axium-ci token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Classify changes and publish
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          ENGINE_ROOT: ${{ github.workspace }}/.axium-release/release
+          FORCE_REANALYZE: ${{ inputs.force }}
+          STABILIZATION_SECONDS: ${{ inputs.stabilization_seconds }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          BASELINE_VERSION: ${{ inputs.baseline_version }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          mkdir -p .jev/presets
+          cp "$ENGINE_ROOT/presets/release-impact.json" .jev/presets/release-impact.json
+          bash "$ENGINE_ROOT/scripts/intelligent-release.sh"
