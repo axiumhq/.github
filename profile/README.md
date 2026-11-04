@@ -1,6 +1,6 @@
 <div align="center">
 
-# AXIUM
+<img src="https://axiumhq.dev/assets/logo.svg" alt="Axium" width="240" />
 
 **Software, do produto à operação.**
 
