@@ -15,6 +15,9 @@ on:
       baseline_version:
         type: string
         default: '0.0.0'
+      engine_ref:
+        type: string
+        default: main
     secrets:
       CI_APP_ID:
         required: true
@@ -41,7 +44,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: axiumhq/.github
-          ref: main
+          ref: ${{ inputs.engine_ref }}
           path: .axium-release
           persist-credentials: false
       - name: Install Jev
