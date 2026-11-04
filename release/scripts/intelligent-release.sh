@@ -93,6 +93,17 @@ needs_review() {
   mark_processed
   exit 0
 }
+
+best_semver_result() {
+  jq -c '
+    (.answers.impact.probabilities // .probabilities // {}) as $p |
+    [{choice:"patch",confidence:($p.patch // 0)},
+     {choice:"minor",confidence:($p.minor // 0)},
+     {choice:"major",confidence:($p.major // 0)}] |
+    max_by(.confidence)
+  '
+}
+
 if [[ "$DRY_RUN" != "true" && "$MAIN_SHA" != "$(git rev-parse HEAD)" ]]; then
   echo "Checkout is not at the latest main commit; a newer push will handle it."
   exit 0
@@ -536,17 +547,11 @@ $pre_summary"
   fi
 
   semver_fallback=false
-  if [[ "$diff_truncated" == false ]] && { [[ "$choice" == "review" ]] || ! awk -v p="$confidence" -v min="$MIN_CONFIDENCE" 'BEGIN { exit !(p >= min) }'; }; then
+  if [[ "$diff_truncated" == false && "$choice" == "review" ]]; then
     previous_choice="$choice"
-    fallback_choice="$(jq -r '
-      .answers.impact.probabilities // {} |
-      [{impact:"patch",probability:(.patch // 0)},
-       {impact:"minor",probability:(.minor // 0)},
-       {impact:"major",probability:(.major // 0)}] |
-      max_by(.probability) | .impact
-    ' <<< "$result")"
-    choice="$fallback_choice"
-    confidence="$(jq -r --arg choice "$choice" '.answers.impact.probabilities[$choice] // 0' <<< "$result")"
+    fallback="$(best_semver_result <<< "$result")"
+    choice="$(jq -r '.choice' <<< "$fallback")"
+    confidence="$(jq -r '.confidence' <<< "$fallback")"
     classification_method="${classification_method}+semver-fallback"
     semver_fallback=true
     echo "PR #$number unresolved classification ($previous_choice, p=$confidence); using $choice as the best-supported SemVer impact."
@@ -631,15 +636,18 @@ while IFS= read -r pending; do
   echo "PR #$number batch gate: choice=$choice (p=$confidence), bump rank=$bump_rank, mass above bump=$above_mass, limit=$(awk -v m="$MIN_CONFIDENCE" 'BEGIN { print 1 - m }')"
   if (( choice_rank > bump_rank )) ||
      ! awk -v mass="$above_mass" -v min="$MIN_CONFIDENCE" 'BEGIN { exit !(mass < 1 - min) }'; then
-    review_reason="Confidence $confidence remains below $MIN_CONFIDENCE and the PR could raise the version bump (mass above bump=$above_mass)"
-    jq -c --arg reason "$review_reason" \
-      '{number,title,url,impact:"review",probability:.confidence,initial_impact:.initial_choice,initial_probability:.initial_confidence,method,needs_review:true,review_reason:$reason}' \
-      <<< "$pending" >> "$TMP/decisions.jsonl"
-    ((review_count+=1))
-    echo "PR #$number => review (p=$confidence; $review_reason)"
-    continue
+    previous_choice="$choice"
+    fallback="$(best_semver_result <<< "$pending")"
+    choice="$(jq -r '.choice' <<< "$fallback")"
+    confidence="$(jq -r '.confidence' <<< "$fallback")"
+    method="$(jq -r '.method' <<< "$pending")+semver-fallback"
+    echo "PR #$number unresolved batch classification ($previous_choice); using $choice as the best-supported SemVer impact."
+  else
+    method="$(jq -r '.method' <<< "$pending")+batch-gate"
+    echo "PR #$number => $choice (p=$confidence; accepted: cannot change the batch's version bump)"
   fi
-  jq -c '{number,title,url,impact:.choice,probability:.confidence,initial_impact:.initial_choice,initial_probability:.initial_confidence,method:(.method + "+batch-gate"),needs_review:false}' \
+  jq -c --arg choice "$choice" --argjson confidence "$confidence" --arg method "$method" \
+    '{number,title,url,impact:$choice,probability:$confidence,initial_impact,initial_probability,method:$method,needs_review:false}' \
     <<< "$pending" >> "$TMP/decisions.jsonl"
   item="- **#$number** $title ([PR](<$url>))"
   case "$choice" in
@@ -648,7 +656,6 @@ while IFS= read -r pending; do
     patch) printf '%s\n' "$item" >> "$TMP/patch.md"; ((patch_count+=1)) ;;
     none) ((none_count+=1)) ;;
   esac
-  echo "PR #$number => $choice (p=$confidence; accepted: cannot change the version bump)"
 done < "$TMP/uncertain.jsonl"
 
 
