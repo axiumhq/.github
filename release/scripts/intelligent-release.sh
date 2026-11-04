@@ -93,6 +93,17 @@ needs_review() {
   mark_processed
   exit 0
 }
+
+best_semver_result() {
+  jq -c '
+    (.answers.impact.probabilities // .probabilities // {}) as $p |
+    [{choice:"patch",confidence:($p.patch // 0)},
+     {choice:"minor",confidence:($p.minor // 0)},
+     {choice:"major",confidence:($p.major // 0)}] |
+    max_by(.confidence)
+  '
+}
+
 if [[ "$DRY_RUN" != "true" && "$MAIN_SHA" != "$(git rev-parse HEAD)" ]]; then
   echo "Checkout is not at the latest main commit; a newer push will handle it."
   exit 0
@@ -294,7 +305,6 @@ while IFS= read -r pr; do
     continue
   fi
 
-  diff_content="$(jq -r '.analysis_diff' "$prep_file")"
   files="$(jq -c '.analysis_files' "$prep_file")"
   body="$body
 
@@ -303,7 +313,7 @@ $pre_summary"
   classification_method_override=""
   review_input_file="$TMP/pr-$number.json"
   : > "$TMP/pr-$number-chunk-results.jsonl"
-  printf '%s' "$diff_content" > "$diff_file"
+  jq -r '.analysis_diff' "$prep_file" > "$diff_file"
   diff_bytes="$(wc -c < "$diff_file" | tr -d ' ')"
   if (( diff_bytes == 0 )); then
     echo "::warning::PR #$number has no implementation diff after pre-analysis; requiring manual review."
@@ -322,7 +332,7 @@ $pre_summary"
     --arg url "$url" \
     --argjson labels "$labels" \
     --argjson files "$files" \
-    --arg diff "$diff_content" \
+    --rawfile diff "$diff_file" \
     --argjson diff_truncated false \
     '{number:$number,title:$title,body:$body,url:$url,labels:$labels,changed_files:$files,diff:$diff,diff_truncated:$diff_truncated}' \
     > "$TMP/pr-$number.json"
@@ -338,7 +348,7 @@ $pre_summary"
       --arg url "$url" \
       --argjson labels "$labels" \
       --argjson files "$files" \
-      --arg diff "$diff_content" \
+      --rawfile diff "$diff_file" \
       --argjson diff_truncated "$diff_truncated" \
       '{number:$number,title:$title,body:$body,url:$url,labels:$labels,changed_files:$files,diff:$diff,diff_truncated:$diff_truncated}' \
       > "$TMP/pr-$number.json"
@@ -464,16 +474,7 @@ $pre_summary"
 
       echo "PR #$number whole-PR synthesis completed; validating its impact and confidence."
     else
-      # Combine by highest impact across all chunks. A major/minor disagreement
-      # is a semantic conflict and requires review rather than an arbitrary choice.
-      has_major="$(jq -s 'any(.[]; .choice == "major")' "$TMP/pr-$number-chunk-results.jsonl")"
-    has_minor="$(jq -s 'any(.[]; .choice == "minor")' "$TMP/pr-$number-chunk-results.jsonl")"
-    if [[ "$has_major" == true && "$has_minor" == true ]]; then
-      printf '{"number":%s,"title":%s,"url":%s,"impact":"review","probability":null,"method":"jev-chunked","needs_review":true,"review_reason":"Chunks disagree between major and minor impact"}\n' \
-        "$number" "$(jq -Rn --arg v "$title" '$v')" "$(jq -Rn --arg v "$url" '$v')" >> "$TMP/decisions.jsonl"
-      ((review_count+=1))
-      continue
-    fi
+      # A higher-impact chunk sets the release level for the complete PR.
     choice="$(jq -s 'if any(.[]; .choice == "major") then "major" elif any(.[]; .choice == "minor") then "minor" elif any(.[]; .choice == "patch") then "patch" else "none" end' "$TMP/pr-$number-chunk-results.jsonl" | tr -d '"')"
     # One chunk evidencing the highest impact is enough for the whole PR, so its
     # confidence comes from the chunks that chose it; chunks confidently
@@ -545,12 +546,25 @@ $pre_summary"
     confidence=0
   fi
 
+  semver_fallback=false
+  if [[ "$diff_truncated" == false && "$choice" == "review" ]]; then
+    previous_choice="$choice"
+    fallback="$(best_semver_result <<< "$result")"
+    choice="$(jq -r '.choice' <<< "$fallback")"
+    confidence="$(jq -r '.confidence' <<< "$fallback")"
+    classification_method="${classification_method}+semver-fallback"
+    semver_fallback=true
+    echo "PR #$number unresolved classification ($previous_choice, p=$confidence); using $choice as the best-supported SemVer impact."
+  fi
+
   echo "PR #$number probabilities: $(jq -c '.answers.impact.probabilities' <<< "$result")"
   review_reason=""
   if [[ "$diff_truncated" == true ]]; then
     review_reason="Diff was truncated at $max_diff_bytes bytes; manual review is required"
   elif [[ "$choice" == "review" ]]; then
     review_reason="Jev still marked this PR for manual review after the second pass"
+  elif [[ "$semver_fallback" == true ]]; then
+    echo "PR #$number using a SemVer fallback after targeted re-analysis."
   elif ! awk -v p="$confidence" -v min="$MIN_CONFIDENCE" 'BEGIN { exit !(p >= min) }'; then
     # Patch vs. no-release ambiguity is low risk only when Jev assigns very
     # little probability to a feature, breaking change, or unresolved review.
@@ -622,15 +636,18 @@ while IFS= read -r pending; do
   echo "PR #$number batch gate: choice=$choice (p=$confidence), bump rank=$bump_rank, mass above bump=$above_mass, limit=$(awk -v m="$MIN_CONFIDENCE" 'BEGIN { print 1 - m }')"
   if (( choice_rank > bump_rank )) ||
      ! awk -v mass="$above_mass" -v min="$MIN_CONFIDENCE" 'BEGIN { exit !(mass < 1 - min) }'; then
-    review_reason="Confidence $confidence remains below $MIN_CONFIDENCE and the PR could raise the version bump (mass above bump=$above_mass)"
-    jq -c --arg reason "$review_reason" \
-      '{number,title,url,impact:"review",probability:.confidence,initial_impact:.initial_choice,initial_probability:.initial_confidence,method,needs_review:true,review_reason:$reason}' \
-      <<< "$pending" >> "$TMP/decisions.jsonl"
-    ((review_count+=1))
-    echo "PR #$number => review (p=$confidence; $review_reason)"
-    continue
+    previous_choice="$choice"
+    fallback="$(best_semver_result <<< "$pending")"
+    choice="$(jq -r '.choice' <<< "$fallback")"
+    confidence="$(jq -r '.confidence' <<< "$fallback")"
+    method="$(jq -r '.method' <<< "$pending")+semver-fallback"
+    echo "PR #$number unresolved batch classification ($previous_choice); using $choice as the best-supported SemVer impact."
+  else
+    method="$(jq -r '.method' <<< "$pending")+batch-gate"
+    echo "PR #$number => $choice (p=$confidence; accepted: cannot change the batch's version bump)"
   fi
-  jq -c '{number,title,url,impact:.choice,probability:.confidence,initial_impact:.initial_choice,initial_probability:.initial_confidence,method:(.method + "+batch-gate"),needs_review:false}' \
+  jq -c --arg choice "$choice" --argjson confidence "$confidence" --arg method "$method" \
+    '{number,title,url,impact:$choice,probability:$confidence,initial_impact,initial_probability,method:$method,needs_review:false}' \
     <<< "$pending" >> "$TMP/decisions.jsonl"
   item="- **#$number** $title ([PR](<$url>))"
   case "$choice" in
@@ -639,7 +656,6 @@ while IFS= read -r pending; do
     patch) printf '%s\n' "$item" >> "$TMP/patch.md"; ((patch_count+=1)) ;;
     none) ((none_count+=1)) ;;
   esac
-  echo "PR #$number => $choice (p=$confidence; accepted: cannot change the version bump)"
 done < "$TMP/uncertain.jsonl"
 
 
